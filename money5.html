@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paisa Master: Infinity</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --p-color: #6366f1; --s-color: #10b981; --d-color: #f43f5e;
+            --bg: #030712; --card: #111827; --glass: rgba(255, 255, 255, 0.03);
+        }
+        body { font-family: 'Outfit', sans-serif; background: var(--bg); color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        
+        .app-shell { width: 100%; max-width: 1100px; display: grid; grid-template-columns: 350px 1fr; gap: 25px; }
+
+        /* Left Panel: Stats */
+        .panel-left { display: flex; flex-direction: column; gap: 20px; }
+        .hero-card { background: linear-gradient(135deg, #4f46e5, #9333ea); padding: 30px; border-radius: 32px; box-shadow: 0 20px 50px rgba(79, 70, 229, 0.3); }
+        .hero-card h1 { font-size: 42px; margin: 10px 0; letter-spacing: -1px; }
+
+        /* Right Panel: Data */
+        .card { background: var(--card); border: 1px solid var(--glass); border-radius: 28px; padding: 25px; }
+        
+        .input-box { background: #1f2937; border: none; padding: 15px; border-radius: 16px; color: white; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        
+        .voice-btn { background: var(--p-color); border: none; width: 50px; height: 50px; border-radius: 50%; color: white; cursor: pointer; transition: 0.3s; }
+        .voice-btn.listening { background: var(--d-color); box-shadow: 0 0 20px var(--d-color); animation: pulse 1s infinite; }
+
+        .txn-scroll { height: 400px; overflow-y: auto; padding-right: 10px; }
+        .txn-scroll::-webkit-scrollbar { width: 4px; }
+        .txn-scroll::-webkit-scrollbar-thumb { background: #374151; border-radius: 10px; }
+
+        .txn-row { display: flex; align-items: center; justify-content: space-between; background: var(--glass); padding: 15px; border-radius: 20px; margin-bottom: 12px; transition: 0.3s; }
+        .txn-row:hover { background: rgba(255,255,255,0.08); transform: scale(1.02); }
+
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .action-btn { padding: 15px; border-radius: 16px; border: none; font-weight: bold; cursor: pointer; color: white; }
+
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        
+        @media (max-width: 850px) { .app-shell { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="app-shell">
+    <div class="panel-left">
+        <div class="hero-card">
+            <span style="opacity: 0.8; font-size: 14px;">Total Wealth</span>
+            <h1 id="mainBal">₹0</h1>
+            <div style="display: flex; gap: 20px; font-size: 13px;">
+                <span><i class="fa fa-arrow-up"></i> In: <b id="incVal">₹0</b></span>
+                <span><i class="fa fa-arrow-down"></i> Out: <b id="expVal">₹0</b></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3><i class="fa fa-chart-line"></i> Cashflow</h3>
+            <canvas id="mainChart" height="200"></canvas>
+        </div>
+
+        <div class="card" style="text-align: center;">
+            <p>Smart Voice Assistant</p>
+            <button id="voiceBtn" class="voice-btn" onclick="startVoice()"><i class="fa fa-microphone"></i></button>
+            <p id="voiceStatus" style="font-size: 12px; color: #94a3b8; margin-top: 10px;">Click to talk (e.g., "Salary 50000")</p>
+        </div>
+    </div>
+
+    <div class="panel-right">
+        <div class="card" style="margin-bottom: 25px;">
+            <h3>Quick Entry</h3>
+            <div style="display: flex; gap: 15px;">
+                <input type="text" id="desc" class="input-box" placeholder="What's the expense?">
+                <input type="number" id="amt" class="input-box" style="width: 150px;" placeholder="Amount">
+            </div>
+            <div class="btn-grid">
+                <button class="action-btn" style="background: var(--s-color);" onclick="addTx(true)">+ Add Income</button>
+                <button class="action-btn" style="background: var(--d-color);" onclick="addTx(false)">- Add Expense</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>History</h3>
+                <button onclick="downloadPDF()" style="background:none; border: 1px solid #374151; color: white; padding: 5px 15px; border-radius: 8px; cursor: pointer;">Export PDF</button>
+            </div>
+            <div class="txn-scroll" id="txnHistory">
+                </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let state = JSON.parse(localStorage.getItem('infinity_data')) || { txns: [] };
+    let chart;
+
+    function initChart() {
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: state.txns.slice(0, 7).map(t => new Date(t.id).toLocaleDateString()).reverse(),
+                datasets: [{
+                    data: state.txns.slice(0, 7).map(t => t.amt).reverse(),
+                    borderColor: '#8b5cf6', tension: 0.4, fill: true, backgroundColor: 'rgba(139, 92, 246, 0.1)'
+                }]
+            },
+            options: { plugins: { legend: { display: false } }, scales: { y: { display: false }, x: { grid: { display: false } } } }
+        });
+    }
+
+    function updateUI() {
+        const list = document.getElementById('txnHistory');
+        let bal = 0, inc = 0, exp = 0;
+        list.innerHTML = '';
+
+        state.txns.forEach((t, i) => {
+            const isInc = t.type === 'in';
+            bal += isInc ? t.amt : -t.amt;
+            isInc ? inc += t.amt : exp += t.amt;
+
+            list.innerHTML += `
+                <div class="txn-row">
+                    <div style="display:flex; align-items:center; gap:15px;">
+                        <div style="background:#1f2937; padding:10px; border-radius:12px;">${isInc ? '💰' : '🛒'}</div>
+                        <div>
+                            <div style="font-weight:bold;">${t.desc}</div>
+                            <div style="font-size:11px; color:#94a3b8;">${new Date(t.id).toLocaleDateString()}</div>
+                        </div>
+                    </div>
+                    <div style="font-weight:900; color:${isInc ? 'var(--s-color)' : 'var(--d-color)'}">
+                        ${isInc ? '+' : '-'}₹${t.amt}
+                    </div>
+                </div>`;
+        });
+
+        document.getElementById('mainBal').innerText = `₹${bal.toLocaleString()}`;
+        document.getElementById('incVal').innerText = `₹${inc}`;
+        document.getElementById('expVal').innerText = `₹${exp}`;
+        
+        chart.data.labels = state.txns.slice(0,7).map(t => new Date(t.id).toLocaleDateString()).reverse();
+        chart.data.datasets[0].data = state.txns.slice(0,7).map(t => t.amt).reverse();
+        chart.update();
+        localStorage.setItem('infinity_data', JSON.stringify(state));
+    }
+
+    function addTx(isInc) {
+        const d = document.getElementById('desc'), a = document.getElementById('amt');
+        if(!d.value || !a.value) return;
+        state.txns.unshift({ id: Date.now(), desc: d.value, amt: parseFloat(a.value), type: isInc ? 'in' : 'out' });
+        d.value = ''; a.value = ''; updateUI();
+    }
+
+    function startVoice() {
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        const btn = document.getElementById('voiceBtn');
+        const status = document.getElementById('voiceStatus');
+
+        recognition.onstart = () => { btn.classList.add('listening'); status.innerText = "Listening..."; };
+        recognition.onresult = (event) => {
+            const text = event.results[0][0].transcript.toLowerCase();
+            const num = text.match(/\d+/);
+            if(num) {
+                state.txns.unshift({ id: Date.now(), desc: text.replace(num[0], '').trim(), amt: parseFloat(num[0]), type: text.includes('salary') || text.includes('income') ? 'in' : 'out' });
+                updateUI();
+            }
+            btn.classList.remove('listening');
+            status.innerText = "Added: " + text;
+        };
+        recognition.start();
+    }
+
+    function downloadPDF() {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        doc.text("Financial Report - Paisa Master Infinity", 10, 10);
+        state.txns.forEach((t, i) => {
+            doc.text(`${new Date(t.id).toLocaleDateString()} - ${t.desc}: ${t.amt}`, 10, 20 + (i * 10));
+        });
+        doc.save("Report.pdf");
+    }
+
+    initChart(); updateUI();
+</script>
+</body>
+</html>
